@@ -74,8 +74,8 @@ int riscv_program_exec(struct riscv_program *p, struct target *t)
 
 	for (size_t i = 0; i < riscv_debug_buffer_size(p->target); ++i) {
 		LOG_DEBUG("Executing program 0x%p: debug_buffer[%02x] = DASM(0x%08lx)", p, (int)i, (long)p->debug_buffer[i]);
-		riscv_write_debug_buffer(t, i, p->debug_buffer[i]);
-	}
+                riscv_write_debug_buffer(t, i, p->debug_buffer[i]);
+        }
 
 	riscv_execute_debug_buffer(t);
 

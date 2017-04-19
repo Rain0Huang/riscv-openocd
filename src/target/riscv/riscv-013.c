@@ -372,6 +372,9 @@ static uint64_t dmi_read(struct target *target, uint16_t address)
 	uint16_t address_in;
 
 	unsigned i = 0;
+        // This first loop ensures that the read request was actually sent
+        // to the target. Note that if for some reason this stays busy,
+        // it is actually due to the Previous dmi_read or dmi_write.
 	for (i = 0; i < 256; i++) {
 		status = dmi_scan(target, NULL, NULL, DMI_OP_READ, address, 0,
 				false);
@@ -385,11 +388,30 @@ static uint64_t dmi_read(struct target *target, uint16_t address)
 		}
 	}
 
-	status = dmi_scan(target, &address_in, &value, DMI_OP_NOP, address, 0,
-			false);
-
 	if (status != DMI_STATUS_SUCCESS) {
 		LOG_ERROR("Failed read from 0x%x; value=0x%" PRIx64 ", status=%d\n",
+				address, value, status);
+		abort();
+	}
+        
+        // This second loop ensures that we got the read
+        // data back. Note that NOP can result in a 'busy' result as well, but
+        // that would be noticed on the next DMI access we do.
+        for (i = 0; i < 256; i++) {
+          status = dmi_scan(target, &address_in, &value, DMI_OP_NOP, address, 0,
+                            false);
+          if (status == DMI_STATUS_BUSY) {
+            increase_dmi_busy_delay(target);
+          } else if (status == DMI_STATUS_SUCCESS) {
+            break;
+          } else {
+            LOG_ERROR("failed read (NOP) at 0x%x, status=%d\n", address, status);
+            break;
+          }
+	}
+
+	if (status != DMI_STATUS_SUCCESS) {
+		LOG_ERROR("Failed read (NOP) from 0x%x; value=0x%" PRIx64 ", status=%d\n",
 				address, value, status);
 		abort();
 	}
@@ -401,19 +423,51 @@ static void dmi_write(struct target *target, uint16_t address, uint64_t value)
 {
 	select_dmi(target);
 	dmi_status_t status = DMI_STATUS_BUSY;
+        uint16_t address_in;
+        uint64_t value_in;
+
 	unsigned i = 0;
-	while (status == DMI_STATUS_BUSY && i++ < 256) {
-		dmi_scan(target, NULL, NULL, DMI_OP_WRITE, address, value,
-				address == DMI_COMMAND);
-		status = dmi_scan(target, NULL, NULL, DMI_OP_NOP, 0, 0, false);
-		if (status == DMI_STATUS_BUSY) {
-			increase_dmi_busy_delay(target);
-		}
+        // The first loop ensures that we successfully sent the write request. 
+	for (i = 0; i < 256; i++) {
+          status = dmi_scan(target, NULL, NULL, DMI_OP_WRITE, address, value,
+                            address == DMI_COMMAND);
+          if (status == DMI_STATUS_BUSY) {
+            increase_dmi_busy_delay(target);
+          } else if (status == DMI_STATUS_SUCCESS) {
+            break;
+          } else {
+            LOG_ERROR("failed write to 0x%x, status=%d\n", address, status);
+            break;
+          }
 	}
+
+        if (status != DMI_STATUS_SUCCESS) {
+          LOG_ERROR("Failed write to 0x%x to 0x%x;" PRIx64 ", status=%d\n",
+                    value, address, status);
+          abort();
+	}
+
+        // The second loop isn't strictly necessary, but would ensure that
+        // the write is complete/ has no non-busy errors before returning from this function.
+        for (i = 0; i < 256; i++) {
+          status = dmi_scan(target, &address_in, &value_in, DMI_OP_NOP, address, 0,
+                            false);
+          if (status == DMI_STATUS_BUSY) {
+            increase_dmi_busy_delay(target);
+          } else if (status == DMI_STATUS_SUCCESS) {
+            break;
+          } else {
+            LOG_ERROR("failed write (NOP) at 0x%x, status=%d\n", address, status);
+            break;
+          }
+	}
+        
 	if (status != DMI_STATUS_SUCCESS) {
-		LOG_ERROR("failed to write 0x%" PRIx64 " to 0x%x; status=%d\n", value, address, status);
-		abort();
+          LOG_ERROR("Failed write (NOP) to 0x%x to 0x%x;" PRIx64 ", status=%d\n",
+                    value, address, status);
+          abort();
 	}
+        
 }
 
 uint32_t abstract_register_size(unsigned width)
@@ -649,7 +703,7 @@ static int init_target(struct command_context *cmd_ctx,
 	info->dmi_busy_delay = 0;
 	/* FIXME: If I set this (which is used by write_memory) to less than 3
 	 * then all register read commands fail. */
-	info->ac_busy_delay = 3;
+	info->ac_busy_delay = 0;
 
 	target->reg_cache = calloc(1, sizeof(*target->reg_cache));
 	target->reg_cache->name = "RISC-V registers";
@@ -1024,7 +1078,8 @@ static int examine(struct target *target)
 
 		/* Guess this is a 32-bit system, we're probing it. */
 		r->xlen[i] = 32;
-
+#if 0
+                
 		/* First find the low 32 bits of the program buffer.  This is
 		 * used to check for alignment. */
 		struct riscv_program program32;
@@ -1042,9 +1097,10 @@ static int examine(struct target *target)
 			r->xlen[i] = -1;
 			continue;
 		}
+              
 		r->debug_buffer_addr[i] = progbuf_addr;
 
-		/* Check to see if the core can execute 64 bit instructions.
+                /* Check to see if the core can execute 64 bit instructions.
 		 * In order to make this work we first need to */
 		int offset = (progbuf_addr % 8 == 0) ? -4 : 0;
 
@@ -1064,11 +1120,15 @@ static int examine(struct target *target)
 				- 4;
 			r->xlen[i] = 64;
 		}
-
+#else
+                r->debug_buffer_addr[i] = 0x380 - (r->debug_buffer_size[i]*4); //progbuf_addr;
+#endif
+                  
 		LOG_DEBUG("hart %d has XLEN=%d", i, r->xlen[i]);
 		LOG_DEBUG("found program buffer at 0x%08lx", (long)(r->debug_buffer_addr[i]));
+		struct riscv_program programdummy;
 
-		if (riscv_program_gah(&program64, r->debug_buffer_addr[i])) {
+		if (riscv_program_gah(&programdummy, r->debug_buffer_addr[i])) {
                 	LOG_ERROR("This implementation will not work with hart %d with debug_buffer_addr of 0x%lx\n", i, 
                             (long)r->debug_buffer_addr[i]);
 			abort();
@@ -1088,18 +1148,32 @@ static int examine(struct target *target)
 			riscv_set_current_hartid(target, i);
 
 			r->trigger_count[i] = t;
+#if 0
 			register_write_direct(target, GDB_REGNO_TSELECT, t);
 			uint64_t tselect = t+1;
 			register_read_direct(target, &tselect, GDB_REGNO_TSELECT);
 			if (tselect != t)
 				break;
+#else
+                        break;
+#endif
 		}
 	}
-
-	/* Resumes all the harts, so the debugger can later pause them. */
-	riscv_resume_all_harts(target);
-	target_set_examined(target);
+        LOG_DEBUG("DONE COUNTING TRIGGERS");
         
+               
+#if 0
+        /* Resumes all the harts, so the debugger can later pause them. */
+	riscv_resume_all_harts(target);
+#endif
+	target_set_examined(target);
+
+        static const uint32_t foobuf[] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
+        
+        LOG_DEBUG("STARTING FOOBUF MEMORY WRITE");
+        target_write_memory(target, 0x80000000, 4, sizeof(foobuf) / sizeof(*foobuf), (const uint8_t*) foobuf);
+        LOG_DEBUG("DONE FOOBUF MEMORY WRITE");
+
         // This print is used by some regression suites to know when
         // they can connect with gdb/telnet.
         // We will need to update those suites if we want to remove this line.
