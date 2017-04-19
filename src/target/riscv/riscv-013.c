@@ -336,7 +336,7 @@ static dmi_status_t dmi_scan(struct target *target, uint16_t *address_in,
 	/* Assume dbus is already selected. */
 	jtag_add_dr_scan(target->tap, 1, &field, TAP_IDLE);
 
-	int idle_count = info->dtmcontrol_idle + info->dmi_busy_delay;
+	int idle_count = info->dmi_busy_delay;
 	if (exec)
 		idle_count += info->ac_busy_delay;
 
@@ -372,6 +372,7 @@ static uint64_t dmi_read(struct target *target, uint16_t address)
 	uint16_t address_in;
 
 	unsigned i = 0;
+
         // This first loop ensures that the read request was actually sent
         // to the target. Note that if for some reason this stays busy,
         // it is actually due to the Previous dmi_read or dmi_write.
@@ -388,12 +389,12 @@ static uint64_t dmi_read(struct target *target, uint16_t address)
 		}
 	}
 
-	if (status != DMI_STATUS_SUCCESS) {
-		LOG_ERROR("Failed read from 0x%x; value=0x%" PRIx64 ", status=%d\n",
-				address, value, status);
-		abort();
-	}
-        
+        if (status != DMI_STATUS_SUCCESS) {
+                LOG_ERROR("Failed read from 0x%x; value=0x%" PRIx64 ", status=%d\n",
+                                address, value, status);
+                abort();
+        }
+
         // This second loop ensures that we got the read
         // data back. Note that NOP can result in a 'busy' result as well, but
         // that would be noticed on the next DMI access we do.
@@ -423,49 +424,47 @@ static void dmi_write(struct target *target, uint16_t address, uint64_t value)
 {
 	select_dmi(target);
 	dmi_status_t status = DMI_STATUS_BUSY;
-        uint16_t address_in;
-        uint64_t value_in;
 
 	unsigned i = 0;
-        // The first loop ensures that we successfully sent the write request. 
-	for (i = 0; i < 256; i++) {
-          status = dmi_scan(target, NULL, NULL, DMI_OP_WRITE, address, value,
-                            address == DMI_COMMAND);
-          if (status == DMI_STATUS_BUSY) {
-            increase_dmi_busy_delay(target);
-          } else if (status == DMI_STATUS_SUCCESS) {
-            break;
-          } else {
-            LOG_ERROR("failed write to 0x%x, status=%d\n", address, status);
-            break;
-          }
-	}
 
-        if (status != DMI_STATUS_SUCCESS) {
-          LOG_ERROR("Failed write to 0x%x to 0x%x;" PRIx64 ", status=%d\n",
-                    value, address, status);
-          abort();
-	}
-
-        // The second loop isn't strictly necessary, but would ensure that
-        // the write is complete/ has no non-busy errors before returning from this function.
+         // The first loop ensures that we successfully sent the write request.
         for (i = 0; i < 256; i++) {
-          status = dmi_scan(target, &address_in, &value_in, DMI_OP_NOP, address, 0,
-                            false);
-          if (status == DMI_STATUS_BUSY) {
-            increase_dmi_busy_delay(target);
-          } else if (status == DMI_STATUS_SUCCESS) {
-            break;
-          } else {
-            LOG_ERROR("failed write (NOP) at 0x%x, status=%d\n", address, status);
-            break;
-          }
+           status = dmi_scan(target, NULL, NULL, DMI_OP_WRITE, address, value,
+                             address == DMI_COMMAND);
+           if (status == DMI_STATUS_BUSY) {
+             increase_dmi_busy_delay(target);
+           } else if (status == DMI_STATUS_SUCCESS) {
+             break;
+           } else {
+             LOG_ERROR("failed write to 0x%x, status=%d\n", address, status);
+             break;
+           }
+        }
+
+         if (status != DMI_STATUS_SUCCESS) {
+           LOG_ERROR("Failed write to 0x%x;" PRIx64 ", status=%d\n",
+                     address, status);
+           abort();
+        }
+
+         // The second loop isn't strictly necessary, but would ensure that
+         // the write is complete/ has no non-busy errors before returning from this function.
+         for (i = 0; i < 256; i++) {
+           status = dmi_scan(target, NULL, NULL, DMI_OP_NOP, address, 0,
+                             false);
+           if (status == DMI_STATUS_BUSY) {
+             increase_dmi_busy_delay(target);
+           } else if (status == DMI_STATUS_SUCCESS) {
+             break;
+           } else {
+             LOG_ERROR("failed write (NOP) at 0x%x, status=%d\n", address, status);
+             break;
+           }
 	}
         
 	if (status != DMI_STATUS_SUCCESS) {
-          LOG_ERROR("Failed write (NOP) to 0x%x to 0x%x;" PRIx64 ", status=%d\n",
-                    value, address, status);
-          abort();
+		LOG_ERROR("failed to write (NOP) 0x%" PRIx64 " to 0x%x; status=%d\n", value, address, status);
+		abort();
 	}
         
 }
@@ -1168,10 +1167,11 @@ static int examine(struct target *target)
 #endif
 	target_set_examined(target);
 
-        static const uint32_t foobuf[] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
+        static const uint32_t foobuf[] = {0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666, 0x77777777,
+                                          0x88888888, 0x99999999, 0xAAAAAAAA, 0xBBBBBBBB, 0xCCCCCCCC, 0xDDDDDDDD, 0xEEEEEEEE};                                
         
         LOG_DEBUG("STARTING FOOBUF MEMORY WRITE");
-        target_write_memory(target, 0x80000000, 4, sizeof(foobuf) / sizeof(*foobuf), (const uint8_t*) foobuf);
+        target_write_memory(target, 0x80000000, sizeof(*foobuf), sizeof(foobuf) / sizeof(*foobuf), (const uint8_t*) foobuf);
         LOG_DEBUG("DONE FOOBUF MEMORY WRITE");
 
         // This print is used by some regression suites to know when
@@ -1404,7 +1404,8 @@ static int write_memory(struct target *target, uint32_t address,
 		LOG_DEBUG("transferring burst starting at address 0x%016lx", cur_addr);
 		riscv_addr_t start = (cur_addr - address) / size;
 		assert(cur_addr > address);
-		struct riscv_batch *batch = riscv_batch_alloc(target, count + 1, info->ac_busy_delay);
+                
+		struct riscv_batch *batch = riscv_batch_alloc(target, count + 1, info->dmi_busy_delay + info->ac_busy_delay);
 
 		for (riscv_addr_t i = start; i < count; ++i) {
 			riscv_addr_t offset = size*i;
