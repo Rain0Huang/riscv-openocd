@@ -53,6 +53,22 @@ struct FreeRTOS_params {
 };
 
 static const struct FreeRTOS_params FreeRTOS_params_list[] = {
+#if 1
+	{
+	"riscv",			/* target_name */
+	4,						/* thread_count_width; */
+	4,						/* pointer_width; */
+	16,						/* list_next_offset; */
+	20,						/* list_width; */
+	8,						/* list_elem_next_offset; */
+	12,						/* list_elem_content_offset */
+	0,						/* thread_stack_offset; */
+	52,						/* thread_name_offset; */
+	&rtos_standard_RiscV32I_stacking,	/* stacking_info */
+	NULL,
+	NULL,
+	},
+#endif
 	{
 	"cortex_m",			/* target_name */
 	4,						/* thread_count_width; */
@@ -103,6 +119,7 @@ static int FreeRTOS_detect_rtos(struct target *target);
 static int FreeRTOS_create(struct target *target);
 static int FreeRTOS_update_threads(struct rtos *rtos);
 static int FreeRTOS_get_thread_reg_list(struct rtos *rtos, int64_t thread_id, char **hex_reg_list);
+static int FreeRTOS_get_thread_reg(struct rtos *rtos, int64_t thread_id, char **hex_reg_list, int index);
 static int FreeRTOS_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[]);
 
 struct rtos_type FreeRTOS_rtos = {
@@ -112,6 +129,7 @@ struct rtos_type FreeRTOS_rtos = {
 	.create = FreeRTOS_create,
 	.update_threads = FreeRTOS_update_threads,
 	.get_thread_reg_list = FreeRTOS_get_thread_reg_list,
+	.get_thread_reg = FreeRTOS_get_thread_reg,
 	.get_symbol_list_to_lookup = FreeRTOS_get_symbol_list_to_lookup,
 };
 
@@ -463,7 +481,8 @@ static int FreeRTOS_get_thread_reg_list(struct rtos *rtos, int64_t thread_id, ch
 			return rtos_generic_stack_read(rtos->target, param->stacking_info_cm4f_fpu, stack_ptr, hex_reg_list);
 		else
 			return rtos_generic_stack_read(rtos->target, param->stacking_info_cm4f, stack_ptr, hex_reg_list);
-	} else
+	} 
+	else
 		return rtos_generic_stack_read(rtos->target, param->stacking_info_cm3, stack_ptr, hex_reg_list);
 }
 
@@ -552,4 +571,132 @@ static int FreeRTOS_create(struct target *target)
 
 	target->rtos->rtos_specific_params = (void *) &FreeRTOS_params_list[i];
 	return 0;
+}
+
+static int FreeRTOS_get_thread_reg(struct rtos *rtos, int64_t thread_id, char **hex_reg, int index)
+{
+	int retval;
+	const struct FreeRTOS_params *param;
+	int64_t stack_ptr = 0;
+
+	*hex_reg = NULL;
+	if (rtos == NULL)
+		return -1;
+
+	if (thread_id == 0)
+		return -2;
+
+	if (rtos->rtos_specific_params == NULL)
+		return -1;
+	
+	param = (const struct FreeRTOS_params *) rtos->rtos_specific_params;
+
+	/* Read the stack pointer */
+	retval = target_read_buffer(rtos->target,
+			thread_id + param->thread_stack_offset,
+			param->pointer_width,
+			(uint8_t *)&stack_ptr);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Error reading stack frame from FreeRTOS thread");
+		return retval;
+	}
+	LOG_DEBUG("FreeRTOS: Read stack pointer at 0x%" PRIx64 ", value 0x%" PRIx64 "\r\n",
+										thread_id + param->thread_stack_offset,
+										stack_ptr);
+	/* Check for armv7m with *enabled* FPU, i.e. a Cortex-M4F */
+	int cm4_fpu_enabled = 0;
+	struct armv7m_common *armv7m_target = target_to_armv7m(rtos->target);
+	if (is_armv7m(armv7m_target)) {
+		if (armv7m_target->fp_feature == FPv4_SP) {
+			/* Found ARM v7m target which includes a FPU */
+			uint32_t cpacr;
+
+			retval = target_read_u32(rtos->target, FPU_CPACR, &cpacr);
+			if (retval != ERROR_OK) {
+				LOG_ERROR("Could not read CPACR register to check FPU state");
+				return -1;
+			}
+
+			/* Check if CP10 and CP11 are set to full access. */
+			if (cpacr & 0x00F00000) {
+				/* Found target with enabled FPU */
+				cm4_fpu_enabled = 1;
+			}
+		}
+	}
+	
+	struct rtos_register_stacking *stack_offset_table;
+	struct stack_register_offset *register_offsets;
+	int size, cnt;
+	
+	if (cm4_fpu_enabled == 1) {
+		/* Read the LR to decide between stacking with or without FPU */
+		uint32_t LR_svc = 0;
+		retval = target_read_buffer(rtos->target,
+				stack_ptr + 0x20,
+				param->pointer_width,
+				(uint8_t *)&LR_svc);
+		if (retval != ERROR_OK) {
+			LOG_OUTPUT("Error reading stack frame from FreeRTOS thread\r\n");
+			return retval;
+		}
+		if ((LR_svc & 0x10) == 0)
+			stack_offset_table =  (struct rtos_register_stacking*)param->stacking_info_cm4f_fpu;
+		else
+			stack_offset_table =  (struct rtos_register_stacking*)param->stacking_info_cm4f;
+	} 
+	else
+		stack_offset_table =  (struct rtos_register_stacking*)param->stacking_info_cm3;
+
+
+	if(index > stack_offset_table->stack_registers_count && index < 1)
+		return -1;
+
+	index --; /* Now start from 0 */
+	size =0;
+	for(cnt=0, register_offsets = (struct stack_register_offset*)stack_offset_table->register_offsets; 
+		cnt<stack_offset_table->stack_registers_count && index >0; register_offsets++, cnt++)
+	{
+		/* Skip pad-registers */
+		if(register_offsets->offset >= 0)
+		{
+			size +=register_offsets->width_bits;
+			index--;
+		}
+	}
+
+	if(0 != index)
+		return -1;	
+
+	stack_ptr += (size/8); /* bits to bytes */
+	if (stack_offset_table->stack_growth_direction == 1)
+		stack_ptr -= stack_offset_table->stack_registers_size;
+
+	uint8_t *buf;
+	char *tmp_p;
+	if(NULL == (buf =(uint8_t*)malloc(register_offsets->width_bits/8 + 1)))
+	{
+		return -1;	
+	}
+	retval = target_read_buffer(rtos->target, (uint32_t)stack_ptr, register_offsets->width_bits/8, buf);
+
+	if (retval != ERROR_OK) {
+		free(buf);
+		LOG_ERROR("Error reading stack frame from thread");
+		return retval;
+	}
+
+	if(NULL == (tmp_p =(char*)malloc(register_offsets->width_bits/4 + 1)))
+	{
+		free(buf);
+		return -1;	
+	}
+	*hex_reg = tmp_p;
+	memset(tmp_p, 0, register_offsets->width_bits/4 + 1);
+	for (cnt = 0; cnt < register_offsets->width_bits/8; cnt++) 
+	{
+		tmp_p += sprintf(tmp_p, "%02x", buf[cnt]);
+	}
+	//LOG_INFO("------pc=0x%s, addr=0x%x", *hex_reg, (int)stack_ptr);
+	return ERROR_OK;
 }

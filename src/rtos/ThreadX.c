@@ -41,7 +41,7 @@ static int ThreadX_update_threads(struct rtos *rtos);
 static int ThreadX_get_thread_reg_list(struct rtos *rtos, int64_t thread_id, char **hex_reg_list);
 static int ThreadX_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[]);
 
-
+#define ARRAY_LEN(a)	(sizeof(a)/sizeof((a)[0]))
 
 struct ThreadX_thread_state {
 	int value;
@@ -113,6 +113,7 @@ static const struct stack_register_offset rtos_threadx_arm926ejs_stack_offsets_i
 const struct rtos_register_stacking rtos_threadx_arm926ejs_stacking[] = {
 {
 	ARM926EJS_REGISTERS_SIZE_SOLICITED,	/* stack_registers_size */
+	ARRAY_LEN(rtos_threadx_arm926ejs_stack_offsets_solicited), 
 	-1,									/* stack_growth_direction */
 	17,									/* num_output_registers */
 	NULL,								/* stack_alignment */
@@ -120,6 +121,7 @@ const struct rtos_register_stacking rtos_threadx_arm926ejs_stacking[] = {
 },
 {
 	ARM926EJS_REGISTERS_SIZE_INTERRUPT,	/* stack_registers_size */
+	ARRAY_LEN(rtos_threadx_arm926ejs_stack_offsets_interrupt), 
 	-1,									/* stack_growth_direction */
 	17,									/* num_output_registers */
 	NULL,								/* stack_alignment */

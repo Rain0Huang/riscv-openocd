@@ -69,9 +69,10 @@ static const struct stack_register_offset rtos_mqx_arm_v7m_stack_offsets[ARMV7M_
 	{ 0x44, 32 }, /* pc   */
 	{ 0x48, 32 }, /* xPSR */
 };
-
+#define ARRAY_LEN(a)	(sizeof(a)/sizeof((a)[0]))
 const struct rtos_register_stacking rtos_mqx_arm_v7m_stacking = {
 	0x4C,					/* stack_registers_size, calculate offset base address */
+	ARRAY_LEN(rtos_mqx_arm_v7m_stack_offsets), 
 	-1,						/* stack_growth_direction */
 	ARMV7M_NUM_CORE_REGS,	/* num_output_registers */
 	NULL,					/* stack_alignment */

@@ -41,9 +41,10 @@ static const struct stack_register_offset rtos_eCos_Cortex_M3_stack_offsets[ARMV
 	{ 0x40, 32 },		/* pc   */
 	{ -1,   32 },		/* xPSR */
 };
-
+#define ARRAY_LEN(a)	(sizeof(a)/sizeof((a)[0]))
 const struct rtos_register_stacking rtos_eCos_Cortex_M3_stacking = {
 	0x44,					/* stack_registers_size */
+	ARRAY_LEN(rtos_eCos_Cortex_M3_stack_offsets), 
 	-1,						/* stack_growth_direction */
 	ARMV7M_NUM_CORE_REGS,	/* num_output_registers */
 	rtos_generic_stack_align8,	/* stack_alignment */

@@ -273,6 +273,12 @@ static int oldriscv_halt(struct target *target)
 	return tt->halt(target);
 }
 
+static int riscv_soft_reset_halt(struct target *target)
+{
+	struct target_type *tt = get_target_type(target);
+	return tt->soft_reset_halt(target);
+}
+
 static int riscv_add_breakpoint(struct target *target,
 	struct breakpoint *breakpoint)
 {
@@ -839,7 +845,7 @@ struct target_type riscv_target =
 	.halt = old_or_new_riscv_halt,
 	.resume = old_or_new_riscv_resume,
 	.step = old_or_new_riscv_step,
-
+	.soft_reset_halt = riscv_soft_reset_halt,
 	.assert_reset = old_or_new_riscv_assert_reset,
 	.deassert_reset = old_or_new_riscv_deassert_reset,
 

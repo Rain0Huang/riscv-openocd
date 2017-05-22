@@ -25,7 +25,7 @@
 
 #include "rtos.h"
 #include "target/armv7m.h"
-
+#define ARRAY_LEN(a)	(sizeof(a)/sizeof((a)[0]))
 static const struct stack_register_offset rtos_chibios_arm_v7m_stack_offsets[ARMV7M_NUM_CORE_REGS] = {
 	{ -1,   32 },		/* r0   */
 	{ -1,   32 },		/* r1   */
@@ -48,6 +48,7 @@ static const struct stack_register_offset rtos_chibios_arm_v7m_stack_offsets[ARM
 
 const struct rtos_register_stacking rtos_chibios_arm_v7m_stacking = {
 	0x24,					/* stack_registers_size */
+	ARRAY_LEN(rtos_chibios_arm_v7m_stack_offsets), 
 	-1,						/* stack_growth_direction */
 	ARMV7M_NUM_CORE_REGS,	/* num_output_registers */
 	NULL,					/* stack_alignment */
@@ -76,6 +77,7 @@ static const struct stack_register_offset rtos_chibios_arm_v7m_stack_offsets_w_f
 
 const struct rtos_register_stacking rtos_chibios_arm_v7m_stacking_w_fpu = {
 	0x64,										/* stack_registers_size */
+	ARRAY_LEN(rtos_chibios_arm_v7m_stack_offsets_w_fpu), 
 	-1,											/* stack_growth_direction */
 	ARMV7M_NUM_CORE_REGS,						/* num_output_registers */
 	NULL,										/* stack_alignment */

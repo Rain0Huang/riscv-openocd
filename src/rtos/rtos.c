@@ -503,6 +503,35 @@ int rtos_generic_stack_read(struct target *target,
 	return ERROR_OK;
 }
 
+int rtos_get_gdb_reg(struct connection *connection, int index)
+{
+	struct target *target = get_target_from_connection(connection);
+	int64_t current_threadid = target->rtos->current_threadid;
+	if ((target->rtos != NULL) && (current_threadid != -1) &&
+			(current_threadid != 0) &&
+			((current_threadid != target->rtos->current_thread) ||
+			(target->smp))) {	/* in smp several current thread are possible */
+		char *hex_reg_list = NULL;
+		
+		//LOG_INFO("%s : 0x%p", target->rtos->type->name, target->rtos->type->get_thread_reg);
+		if(NULL != target->rtos->type->get_thread_reg)
+		{
+			target->rtos->type->get_thread_reg(target->rtos,
+			current_threadid,
+			&hex_reg_list, index);
+		}
+		else
+			return ERROR_FAIL;
+
+		if (hex_reg_list != NULL) {
+			gdb_put_packet(connection, hex_reg_list, strlen(hex_reg_list));
+			free(hex_reg_list);
+			return ERROR_OK;
+		}
+	}
+	return ERROR_FAIL;
+}
+
 int rtos_try_next(struct target *target)
 {
 	struct rtos *os = target->rtos;

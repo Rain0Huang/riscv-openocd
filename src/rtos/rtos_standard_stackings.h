@@ -24,7 +24,7 @@
 #endif
 
 #include "rtos.h"
-
+extern const struct rtos_register_stacking rtos_standard_RiscV32I_stacking;
 extern const struct rtos_register_stacking rtos_standard_Cortex_M3_stacking;
 extern const struct rtos_register_stacking rtos_standard_Cortex_M4F_stacking;
 extern const struct rtos_register_stacking rtos_standard_Cortex_M4F_FPU_stacking;

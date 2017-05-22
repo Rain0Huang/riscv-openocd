@@ -1267,7 +1267,9 @@ static int gdb_get_register_packet(struct connection *connection,
 #ifdef _DEBUG_GDB_IO_
 	LOG_DEBUG("-");
 #endif
-
+	if ((target->rtos != NULL) && (ERROR_OK == rtos_get_gdb_reg(connection, reg_num)))
+		return ERROR_OK;
+	
 	retval = target_get_gdb_reg_list(target, &reg_list, &reg_list_size,
 			REG_CLASS_ALL);
 	if (retval != ERROR_OK)

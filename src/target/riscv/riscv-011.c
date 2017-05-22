@@ -1433,6 +1433,23 @@ static int halt(struct target *target)
 	return ERROR_OK;
 }
 
+static int soft_reset_halt(struct target *target)
+{
+	jtag_add_ir_scan(target->tap, &select_dbus, TAP_IDLE);
+	dbus_write(target, DMCONTROL, DMCONTROL_NDRESET);
+	
+	return halt(target);
+}
+
+static void riscv011_select_current_hart(struct target *target)
+{
+	RISCV_INFO(r);
+
+	uint64_t dmcontrol = dbus_read(target, DMCONTROL);
+	dmcontrol = set_field(dmcontrol, DMCONTROL_HARTID, r->current_hartid);
+	dbus_write(target, DMCONTROL, dmcontrol);
+}
+
 static int init_target(struct command_context *cmd_ctx,
 		struct target *target)
 {
@@ -1440,6 +1457,7 @@ static int init_target(struct command_context *cmd_ctx,
 	riscv_info_t *generic_info = (riscv_info_t *) target->arch_info;
 	generic_info->get_register = NULL;
 	generic_info->version_specific = calloc(1, sizeof(riscv011_info_t));
+	generic_info->select_current_hart = riscv011_select_current_hart;
 	if (!generic_info->version_specific)
 		return ERROR_FAIL;
 	riscv011_info_t *info = get_info(target);
@@ -2290,6 +2308,7 @@ static int read_memory(struct target *target, uint32_t address,
 			return ERROR_FAIL;
 	}
 	cache_set_jump(target, 3);
+	cache_set32(target, 4, 0);/* Force dirty before write .By Rain0Huang At 20:02,May-19,2017. */
 	cache_write(target, CACHE_NO_READ, false);
 
 	riscv011_info_t *info = get_info(target);
@@ -2578,6 +2597,8 @@ static int arch_state(struct target *target)
 	return ERROR_OK;
 }
 
+
+
 struct target_type riscv011_target =
 {
 	.name = "riscv",
@@ -2592,7 +2613,7 @@ struct target_type riscv011_target =
 	.halt = halt,
 	.resume = riscv011_resume,
 	.step = step,
-
+	.soft_reset_halt = soft_reset_halt,
 	.assert_reset = assert_reset,
 	.deassert_reset = deassert_reset,
 
